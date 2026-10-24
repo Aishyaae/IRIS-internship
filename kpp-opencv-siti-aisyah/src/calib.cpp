@@ -4,7 +4,7 @@
 
 int main () {
     // koneksi IP webcam
-    std::string streamAddress = "http://192.168.110.127:8080/video"; 
+    std::string streamAddress = "http://xxx.xxx.xxx.xxx:8080/video"; 
     cv::VideoCapture cap(streamAddress, cv::CAP_FFMPEG); 
 
     cv::namedWindow("Kamera", cv::WINDOW_NORMAL);
