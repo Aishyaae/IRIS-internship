@@ -1,0 +1,9 @@
+udp_bridge:
+  ros__parameters:
+    esp_ip: "127.0.0.1"      # ganti ke IP ESP32 saat uji hardware, mis. 192.168.4.1
+    esp_port: 4210
+    local_port: 4211
+    send_rate_hz: 50.0
+    cmd_timeout_ms: 300
+    max_steering_deg: 30.0
+    max_speed_mps: 1.0

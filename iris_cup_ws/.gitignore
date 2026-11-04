@@ -1,0 +1,8 @@
+build/
+install/
+log/
+src/communication/src/fake_esp32.cpp
+src/communication/src/udp_bridge.cpp
+
+*.bag
+*.db3
