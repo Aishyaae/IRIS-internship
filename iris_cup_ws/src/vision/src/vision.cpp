@@ -18,22 +18,22 @@ using namespace std::chrono_literals;
 class VisionNode : public rclcpp::Node {
 public:
   // PERBAIKAN 1: Variabel array wajib diaktifkan untuk Trackbar
-  int h[2] = {19, 92}, s[2] = {25, 98}, v[2] = {118, 246};
+  int h[2] = {20, 40}, s[2] = {40, 168}, v[2] = {203, 255};
 
   VisionNode() : Node("vision_node") {
     // PERBAIKAN 2: Menambahkan tanda komentar
     // trackbar
-    namedWindow("Control");
+    // namedWindow("Control");
 
-    createTrackbar("Hmin", "Control", &h[0], 255);
-    createTrackbar("Smin", "Control", &s[0], 255);
-    createTrackbar("Vmin", "Control", &v[0], 255);
+    // createTrackbar("Hmin", "Control", &h[0], 255);
+    // createTrackbar("Smin", "Control", &s[0], 255);
+    // createTrackbar("Vmin", "Control", &v[0], 255);
 
-    createTrackbar("Hmax", "Control", &h[1], 255);
-    createTrackbar("Smax", "Control", &s[1], 255);
-    createTrackbar("Vmax", "Control", &v[1], 255);
+    // createTrackbar("Hmax", "Control", &h[1], 255);
+    // createTrackbar("Smax", "Control", &s[1], 255);
+    // createTrackbar("Vmax", "Control", &v[1], 255);
 
-    stream_url = declare_parameter<std::string>("stream_url", "http://admin:210808@192.168.54.253:8081");
+    stream_url = declare_parameter<std::string>("stream_url", "http://arifin:121212@10.7.101.250:8081");
 
     pub_centers = create_publisher<std_msgs::msg::Int32MultiArray>("/vision/lane_centers", 10);
     pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
@@ -72,16 +72,16 @@ private:
     if(frame.empty()) return;
 
     try {
-      Mat frame_bev, frame_hsv, frame_threshold;
+      Mat frame_bev, frame_hsv, frame_threshold, frame_morph;
       
       int width = frame.cols;
       int height = frame.rows;
 
       Point2f src[4] = {
-        Point2f(316, 460),
-        Point2f(646, 472),
-        Point2f(793, 616),
-        Point2f(11, 537),
+        Point2f(107, 148),
+        Point2f(532, 148),
+        Point2f(628, 310),
+        Point2f(11, 301),
       };
 
       Point2f dst[4] = {
@@ -97,6 +97,9 @@ private:
       cvtColor(frame_bev, frame_hsv, COLOR_BGR2HSV);
     
       inRange(frame_hsv, Scalar(h[0], s[0], v[0]), Scalar(h[1], s[1], v[1]), frame_threshold);
+
+      dilate(frame_morph, frame_morph, Mat(), Point(-1, -1), 5);
+      erode(frame_morph, frame_morph, Mat(), Point(-1, -1), 2);
 
       std::vector<std::vector<Point>> contours;
       findContours(frame_threshold, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
