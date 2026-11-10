@@ -1,3 +1,4 @@
+
 #include <memory>
 #include <algorithm>
 #include <cmath>
@@ -6,14 +7,25 @@
 #include "std_msgs/msg/int32_multi_array.hpp"
 #include "std_msgs/msg/float32.hpp"
 
+using namespace std;
+
 class MasterNode : public rclcpp::Node {
 public:
   MasterNode() : Node("kinematika_node") {
-    // parameter kontrol PID
-    kp = declare_parameter<double>("kp", 0.35);
-    kd = declare_parameter<double>("kd", 0);
-    base_pwm = declare_parameter<int>("base_pwm", 150); // kecepatan dasar mobil
+    // parameter robot
+    wheel_base = declare_parameter<double>("wheel_base", 0.130);
+
+    // parameter kamera
     image_width = declare_parameter<int>("image_width", 640);
+    image_height = declare_parameter<int>("image_height", 480);
+
+    // parameter kecepatan dan PID
+    target_vel = declare_parameter<int>("target_vel", 50); // target kecepatan 50cm/s
+    current_pwm = declare_parameter<int>("start_pwm", 1500);
+
+    kp = declare_parameter<double>("kp", 0.35);
+    ki = declare_parameter<double>("ki", 0.1);
+    kd = declare_parameter<double>("kd", 0.5);
 
     // publisher untuk UDP Sender
     pub_cmd = create_publisher<std_msgs::msg::Int32MultiArray>("/master/geometry_control", 10);
@@ -25,94 +37,123 @@ public:
     // subscriber ke data vision
     sub_vision = create_subscription<std_msgs::msg::Int32MultiArray>(
       "/vision/lane_centers", 10,
-      std::bind(&MasterNode::vision_callback, this, std::placeholders::_1));
+      bind(&MasterNode::vision_callback, this, placeholders::_1));
 
     // subscriber ke feedback dari UDP receiver
     sub_feedback = create_subscription<std_msgs::msg::Int32MultiArray>(
       "/feedback", 10,
-      std::bind(&MasterNode::feedback_callback, this, std::placeholders::_1));
+      bind(&MasterNode::feedback_callback, this, placeholders::_1));
 
     RCLCPP_INFO(get_logger(), "Master Node Kinematika Dimulai");
   }
 
 private:
+  void pixel_convertion(int target_x, int target_y, double &dx, double &dy) {
+    int center_x = image_width / 2;
+    int bottom_y = image_height;
+
+    double xm_per_pix = 1.0 / 400/0; // 1 meter = 400 pixel
+    double ym_per_pix = 1.0 / 400/0;
+
+    dx = (target_x - center_x) * xm_per_pix;
+    dy = (bottom_y - target_y) * ym_per_pix;
+  }
+
+  double pure_pursuit(double dx, double dy) {
+    double Ld = hypot(dx, dy);
+
+    if (Ld < 0.001) return 0.0;
+
+    double theta = atan2(dx, dy);
+    double k = (2.0 * sin(theta) / Ld);
+
+    double virtual_steering = atan(wheel_base * k);
+    return virtual_steering * (180.0 / M_PI); // ubah ke derajat
+  }
+
+  void vel_pid(int actual_vel) {
+    int error = target_vel - actual_vel;
+    
+    integral_vel_error += error;
+    integral_vel_error = clamp(integral_vel_error, -500, 500);
+
+    int d_error = error - last_vel_error;
+
+    double p = kp * error;
+    double i = ki * integral_vel_error;
+    double d = kd * d_error;
+
+    int correction = static_cast<int>(p + i + d);
+
+    current_pwm += correction;
+    current_pwm = clamp(current_pwm, -9999, 9999);
+
+    last_vel_error = error;
+    return current_pwm;
+  }
+
   void feedback_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
     if (msg->data.size() < 4) return;
 
-    int left_ticks = msg->data[0];
-    int right_ticks = msg->data[1];
-    int vel_x_cms = msg->data[2]; // kecepatan maju/mundur dalam cm/s
-    int vel_y_cms = msg->data[3];
+    current_vel_x = msg->data[2]; // kecepatan maju
 
-    // RCLCPP_INFO(get_logger(), "Kecepatan aktual: %d cm/s | Ticks: L=%d, R=%d", vel_x_cms, left_ticks, right_ticks);
-
-    // simpan ke variabel member 
-    current_vel_x = vel_x_cms;
-
-    // publish kecepatan aktual untuk basestation
     std_msgs::msg::Float32 speed_msg;
-    speed_msg.data = vel_x_cms;
+    speed_msg.data = static_cast<float>(current_vel_x);
     pub_speed_web->publish(speed_msg);
   }
 
   void vision_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
-    int steer = 0;
     int pwm = 0;
+    int steer = 0;
 
-    // jika vision tidak menemukan centroid
+    // jika vision tidak mendeteksi garis
     if (msg->data.empty()) {
-      steer = last_steer;
-      pwm = std::max(0, base_pwm - 30);
+      steer= last_steer; // pertahankan sudut terakhir
+      pwm = max(0, current_pwm - 200); // kurangi kecepatan perlahan
     } else {
-      // titik tengah frame kamera
-      int image_center_x = image_width / 2; 
+      int target_x = msg->data[0];
+      int target_y = msg->data[1];
 
-      // ambil titik x terdekat
-      int target_x = msg->data[0]; 
+      // konversi pixel
+      double dx = 0.0;
+      double dy = 0.0;
+      pixel_convertion(target_x, target_y, dx, dy);
 
-      // hitung error lateral (seberapa jauh target X dari tengah layar)
-      int error = target_x - image_center_x;
+      // pure pursuit
+      steer = static_cast<int>pure_pursuit(dx, dy);
+      steer = clamp(steer, -35, 35);
 
-      // hitung derivative error
-      int d_error = error - last_error;
+      // PID kecepatan
+      pwm = vel_pid(current_vel_x);
 
-      // hitung steering dengan PD
-      steer = static_cast<int>((kp * error) + (kd * d_error));
-      steer = std::clamp(steer, -90, 90);
-
-      // hitung pwm
-      pwm = base_pwm - static_cast<int>(std::abs(steer) * 1.5);
-
-      // tambah tenaga kalo tersangkut
-      if (current_vel_x < 10 && pwm > 0) {
-        pwm += 30; 
+      // slow down saat belok
+      if (abs(steer) > 20) {
+        pwm = max(0, pwm - 300);
       }
-      pwm = std::clamp(pwm, 0, 255); 
 
-      // simpan memori
       last_steer = steer;
-      last_error = error;
+
     }
 
-      // publish ke UDP sender [pwm, steer]
-      std_msgs::msg::Int32MultiArray cmd_msg;
-      cmd_msg.data = {pwm, steer};
-      pub_cmd->publish(cmd_msg);
+    // publish ke UDP sender [pwm, steer]
+    std_msgs::msg::Int32MultiArray cmd_msg;
+    cmd_msg.data = {pwm, steer};
+    pub_cmd->publish(cmd_msg);
 
-      // publish steering angle ke basestation
-      std_msgs::msg::Float32 steering_web_msg;
-      steering_web_msg.data = static_cast<float>(steer);
-      pub_steering_web->publish(steering_web_msg);
+    // publish steering angle ke basestation
+    std_msgs::msg::Float32 steering_web_msg;
+    steering_web_msg.data = static_cast<float>(steer);
+    pub_steering_web->publish(steering_web_msg);
   }
 
-  double kp;
-  double kd;
-  int base_pwm;
-  int image_width;
+  double wheel_base;
+  int image_width, image_height, servo_offset;
 
-  int last_error = 0;
+  int target_vel, current_vel_x, current_pwm;
+  double kp, ki, kd;
+  int integral_vel_error = 0;
+  int last_vel_error = 0;
   int last_steer = 0;
-  int current_vel_x = 0;
 
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr pub_cmd;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_steering_web;
@@ -124,7 +165,7 @@ private:
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<MasterNode>());
+  rclcpp::spin(make_shared<MasterNode>());
   rclcpp::shutdown();
   return 0;
 }

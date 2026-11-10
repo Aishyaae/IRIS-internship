@@ -10,7 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 
-add_executable(kinematika_node src/kinematika.cpp)
+add_executable(kinematika_node src/kinematics.cpp)
 ament_target_dependencies(kinematika_node rclcpp std_msgs)
 
 install(TARGETS 
