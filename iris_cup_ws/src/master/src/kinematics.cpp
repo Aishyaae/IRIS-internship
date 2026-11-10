@@ -52,11 +52,12 @@ private:
     int center_x = image_width / 2;
     int bottom_y = image_height;
 
-    double xm_per_pix = 1.0 / 400/0; // 1 meter = 400 pixel
-    double ym_per_pix = 1.0 / 400/0;
+    // double xm_per_pix = 1.0 / 400/0; // 1 meter = 400 pixel
+    // double ym_per_pix = 1.0 / 400/0;
+    double dummy_scale = 0.001;
 
-    dx = (target_x - center_x) * xm_per_pix;
-    dy = (bottom_y - target_y) * ym_per_pix;
+    dx = (target_x - center_x) * dummy_scale;
+    dy = (bottom_y - target_y) * dummy_scale;
   }
 
   double pure_pursuit(double dx, double dy) {
