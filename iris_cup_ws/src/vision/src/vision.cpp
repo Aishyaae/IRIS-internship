@@ -6,6 +6,7 @@
 
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.hpp>
+#include <image_transport/image_transport.hpp>
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -20,8 +21,8 @@ public:
   // PERBAIKAN 1: Variabel array wajib diaktifkan untuk Trackbar
   int h[2] = {20, 40}, s[2] = {40, 168}, v[2] = {203, 255};
 
+
   VisionNode() : Node("vision_node") {
-    // PERBAIKAN 2: Menambahkan tanda komentar
     // trackbar
     // namedWindow("Control");
 
@@ -33,11 +34,13 @@ public:
     // createTrackbar("Smax", "Control", &s[1], 255);
     // createTrackbar("Vmax", "Control", &v[1], 255);
 
-    stream_url = declare_parameter<std::string>("stream_url", "http://arifin:121212@10.7.101.250:8081");
+    stream_url = declare_parameter<std::string>("stream_url", "http://admin:12345@10.110.5.153:8081/video");
 
     pub_centers = create_publisher<std_msgs::msg::Int32MultiArray>("/vision/lane_centers", 10);
-    pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
-    pub_processed = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_processed", 10);
+    // pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
+    // pub_processed = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_processed", 10);
+    pub_raw = image_transport::create_publisher(this, "/camera/image_raw");
+    pub_processed = image_transport::create_publisher(this, "camera/image_processed");
     
     RCLCPP_INFO(get_logger(), "Mencoba terhubung ke: %s", stream_url.c_str());
 
@@ -50,17 +53,11 @@ public:
   }
 
 private:
-  sensor_msgs::msg::CompressedImage matToCompressedMsg(const Mat &frame) {
-    sensor_msgs::msg::CompressedImage msg;
-    msg.header.stamp = this->now();
-    msg.format = "jpeg";
-    std::vector<uchar> buffer;
-    imencode(".jpg", frame, buffer);
-    msg.data = buffer;
+  sensor_msgs::msg::Image::SharedPtr matToCompressedMsg(const Mat &frame) {
+    sensor_msgs::msg::Image::SharedPtr msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
     return msg;
   }
 
-  // PERBAIKAN 3: Menghapus duplikasi fungsi image_callback()
   void image_callback() {
     if (!cap.isOpened()) {
       cap.open(stream_url);
@@ -70,6 +67,7 @@ private:
     Mat frame;
     cap >> frame;
     if(frame.empty()) return;
+    pub_raw.publish(matToCompressedMsg(frame));
 
     try {
       Mat frame_bev, frame_hsv, frame_threshold, frame_morph;
@@ -78,10 +76,10 @@ private:
       int height = frame.rows;
 
       Point2f src[4] = {
-        Point2f(107, 148),
-        Point2f(532, 148),
-        Point2f(628, 310),
-        Point2f(11, 301),
+        Point2f(119, 59),
+        Point2f(539, 59),
+        Point2f(596, 472),
+        Point2f(119, 476),
       };
 
       Point2f dst[4] = {
@@ -98,11 +96,13 @@ private:
     
       inRange(frame_hsv, Scalar(h[0], s[0], v[0]), Scalar(h[1], s[1], v[1]), frame_threshold);
 
-      dilate(frame_morph, frame_morph, Mat(), Point(-1, -1), 5);
+      frame_morph = frame_threshold.clone(); 
+
       erode(frame_morph, frame_morph, Mat(), Point(-1, -1), 2);
+      dilate(frame_morph, frame_morph, Mat(), Point(-1, -1), 5);
 
       std::vector<std::vector<Point>> contours;
-      findContours(frame_threshold, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+      findContours(frame_morph, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
       Mat frame_result = frame_bev.clone();
       std::vector<Point> centers;
@@ -110,10 +110,10 @@ private:
       for (size_t i = 0; i < contours.size(); i++) {
         double area = contourArea(contours[i]);
 
-        if (area > 400 && area < 15000) {
+        if (area > 400) {
           Rect boundingBox = boundingRect(contours[i]);
           
-          if (boundingBox.height < (height * 0.5)) {
+          if (boundingBox.height <= height) {
             rectangle(frame_result, boundingBox, Scalar(0, 255, 0), 2);
             Point centroid(boundingBox.x + boundingBox.width / 2, boundingBox.y + boundingBox.height / 2);
             circle(frame_result, centroid, 5, Scalar(0, 0, 255), -1);
@@ -133,27 +133,28 @@ private:
       }
       pub_centers->publish(centers_msg);
 
-      pub_raw->publish(matToCompressedMsg(frame));
-      pub_processed->publish(matToCompressedMsg(frame_result));
+      pub_processed.publish(matToCompressedMsg(frame_result));
 
-      imshow("RAW", frame);
-      imshow("Thresholding", frame_threshold);
-      imshow("BEV", frame_result);
+      // imshow("RAW", frame);
+      // imshow("Thresholding", frame_threshold);
+      // imshow("BEV", frame_result);
       
-      waitKey(1);
+      // waitKey(1);
 
     } catch (const cv_bridge::Exception &e) {
       RCLCPP_ERROR(get_logger(), "Error: %s", e.what());
     }
   }
 
-  // PERBAIKAN 4: Penulisan tipe data diperbaiki
   std::string stream_url;
   cv::VideoCapture cap;
   rclcpp::TimerBase::SharedPtr timer;
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr pub_centers;
-  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_raw;
-  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_processed;
+  // rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_raw;
+  // rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_processed;
+
+  image_transport::Publisher pub_raw;
+  image_transport::Publisher pub_processed;
 };
 
 int main(int argc, char **argv) {
