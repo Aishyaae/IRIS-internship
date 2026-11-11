@@ -21,7 +21,7 @@ public:
   UdpReceiverNode() : Node("udp_receiver_node") {
     // parameter
     port = declare_parameter<int>("port", 4002);
-    poll_rate_hz = declare_parameter<int>("poll_rate_hz", 100);
+    poll_rate_hz = declare_parameter<int>("poll_rate_hz", 50);
 
     setup_socket();
 
@@ -46,12 +46,20 @@ public:
 
 private:
   static constexpr char kHeader[5] = {'F', 'R', 'A', 'N', 'A'};
-  static constexpr size_t kPacketSize = 21; // 5 (header) + 4*4 (int32 fields)
+  static constexpr size_t kPacketSize = 53; // 5 header + 12*4 data
 
   struct Feedback {
     int32_t packet_seq;
+    int32_t encoder_count;
     int32_t encoder_delta;
-    int32_t supply_voltage;
+    int32_t rpm_centi;
+    int32_t adc_raw;
+    int32_t adc_voltage_mV;
+    int32_t supply_voltage_mV;
+    int32_t servo_target;
+    int32_t servo_current;
+    int32_t motor_speed;
+    int32_t motor_dir;
     int32_t stm32_connected;
   };
 
@@ -86,16 +94,24 @@ private:
     if (len < kPacketSize || std::memcmp(buf, kHeader, sizeof(kHeader)) != 0) {
       return false;
     }
-    out.packet_seq = read_i32_le(buf + 5);
-    out.encoder_delta = read_i32_le(buf + 9);
-    out.supply_voltage = read_i32_le(buf + 13);
-    out.stm32_connected = read_i32_le(buf + 17);
+    out.packet_seq        = read_i32_le(buf + 5);
+    out.encoder_count     = read_i32_le(buf + 9);
+    out.encoder_delta     = read_i32_le(buf + 13);
+    out.rpm_centi         = read_i32_le(buf + 17);
+    out.adc_raw           = read_i32_le(buf + 21);
+    out.adc_voltage_mV    = read_i32_le(buf + 25);
+    out.supply_voltage_mV = read_i32_le(buf + 29);
+    out.servo_target      = read_i32_le(buf + 33);
+    out.servo_current     = read_i32_le(buf + 37);
+    out.motor_speed       = read_i32_le(buf + 41);
+    out.motor_dir         = read_i32_le(buf + 45);
+    out.stm32_connected   = read_i32_le(buf + 49);
     return true;
   }
 
   // kosongkan semua paket yang menunggu di socket, publish tiap paket valid
   void timer_callback() {
-    uint8_t buf[64];
+    uint8_t buf[128];
     while (true) {
       ssize_t n = recvfrom(sock, buf, sizeof(buf), MSG_DONTWAIT, nullptr, nullptr);
       if (n < 0) {
@@ -116,7 +132,20 @@ private:
 
   void publish_feedback(const Feedback &fb) {
     std_msgs::msg::Int32MultiArray msg;
-    msg.data = {fb.packet_seq, fb.encoder_delta, fb.supply_voltage, fb.stm32_connected};
+    msg.data = {
+      fb.packet_seq,        // msg->data[0]
+      fb.encoder_count,     // msg->data[1]
+      fb.encoder_delta,     // msg->data[2]
+      fb.rpm_centi,         // msg->data[3]
+      fb.adc_raw,           // msg->data[4]
+      fb.adc_voltage_mV,    // msg->data[5]
+      fb.supply_voltage_mV, // msg->data[6]
+      fb.servo_target,      // msg->data[7]
+      fb.servo_current,     // msg->data[8]
+      fb.motor_speed,       // msg->data[9]
+      fb.motor_dir,         // msg->data[10]
+      fb.stm32_connected    // msg->data[11]
+    };
     pub->publish(msg);
   }
 

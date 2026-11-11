@@ -19,10 +19,10 @@ class UdpSenderNode : public rclcpp::Node {
 public:
   UdpSenderNode() : Node("udp_sender_node") {
     // parameter
-    host = declare_parameter<std::string>("host", "192.168.1.50"); // IP ESP32
+    host = declare_parameter<std::string>("host", "192.168.43.215"); // IP ESP32
     port = declare_parameter<int>("port", 4001);
     rate_hz = declare_parameter<int>("rate_hz", 20);
-    timeout_ms = declare_parameter<int>("cmd_timeout_ms", 500);
+    timeout_ms = declare_parameter<int>("cmd_timeout_ms", 1000);
 
     setup_socket();
 
@@ -73,7 +73,7 @@ private:
   // isi buffer biner 13 byte: "FRANA" | pwm (int32 LE) | steer (int32 LE)
   void build_packet(uint8_t (&buf)[kPacketSize], int32_t pwm_val, int32_t steer_val) {
     pwm_val = std::clamp<int32_t>(pwm_val, -9999, 9999);
-    steer_val = std::clamp<int32_t>(steer_val, -35, 35);
+    steer_val = std::clamp<int32_t>(steer_val, 0, 180);
 
     uint32_t pwm_le = htole32(static_cast<uint32_t>(pwm_val));
     uint32_t steer_le = htole32(static_cast<uint32_t>(steer_val));
