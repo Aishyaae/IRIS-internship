@@ -19,7 +19,7 @@ using namespace std::chrono_literals;
 class VisionNode : public rclcpp::Node {
 public:
   // PERBAIKAN 1: Variabel array wajib diaktifkan untuk Trackbar
-  int h[2] = {20, 40}, s[2] = {40, 168}, v[2] = {203, 255};
+  int h[2] = {20, 55}, s[2] = {8, 220}, v[2] = {209, 255};
 
 
   VisionNode() : Node("vision_node") {
@@ -34,13 +34,15 @@ public:
     // createTrackbar("Smax", "Control", &s[1], 255);
     // createTrackbar("Vmax", "Control", &v[1], 255);
 
-    stream_url = declare_parameter<std::string>("stream_url", "http://admin:12345@10.110.5.153:8081/video");
+    stream_url = declare_parameter<std::string>("stream_url", "http://admin:12345@192.168.54.250:8081/video");
 
     pub_centers = create_publisher<std_msgs::msg::Int32MultiArray>("/vision/lane_centers", 10);
-    // pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
-    // pub_processed = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_processed", 10);
-    pub_raw = image_transport::create_publisher(this, "/camera/image_raw");
-    pub_processed = image_transport::create_publisher(this, "camera/image_processed");
+    pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
+    pub_processed = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_processed", 10);
+    pub_bev = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_bev", 10);
+
+    // pub_raw = image_transport::create_publisher(this, "/camera/image_raw");
+    // pub_processed = image_transport::create_publisher(this, "camera/image_processed");
     
     RCLCPP_INFO(get_logger(), "Mencoba terhubung ke: %s", stream_url.c_str());
 
@@ -49,13 +51,39 @@ public:
       RCLCPP_ERROR(get_logger(), "Gagal membuka stream! Cek IP HP dan koneksi Wi-Fi.");
     }
 
+    loadCalibrationData();
+
     timer = create_wall_timer(33ms, std::bind(&VisionNode::image_callback, this));
   }
 
 private:
-  sensor_msgs::msg::Image::SharedPtr matToCompressedMsg(const Mat &frame) {
-    sensor_msgs::msg::Image::SharedPtr msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
-    return msg;
+  sensor_msgs::msg::CompressedImage matToCompressedMsg(const Mat &frame) {
+      sensor_msgs::msg::CompressedImage msg;
+      msg.header.stamp = this->now();
+      msg.format = "jpeg";
+      std::vector<uchar> buffer;
+      
+      imencode(".jpg", frame, buffer);
+      msg.data = buffer;
+      return msg;
+    }
+
+  cv::Mat cameraMatrix;
+  cv::Mat distCoeffs;
+  bool isCalibrated = false;
+  
+  // Fungsi untuk memuat file YAML
+  void loadCalibrationData() {
+    FileStorage fs("src/vision/src/kalibrasi.yaml", FileStorage::READ);
+    if (fs.isOpened()) {
+      fs["camera_matrix"] >> cameraMatrix;
+      fs["distortion_coefficients"] >> distCoeffs;
+      fs.release();
+      isCalibrated = true;
+      RCLCPP_INFO(get_logger(), "File kalibrasi berhasil dimuat.");
+    } else {
+      RCLCPP_WARN(get_logger(), "File kalibrasi tidak ditemukan, menggunakan frame mentah.");
+    }
   }
 
   void image_callback() {
@@ -64,10 +92,17 @@ private:
       return;
     }
     
-    Mat frame;
-    cap >> frame;
-    if(frame.empty()) return;
-    pub_raw.publish(matToCompressedMsg(frame));
+    Mat frame, raw_frame;
+    cap >> raw_frame;
+    if(raw_frame.empty()) return;
+
+    if (isCalibrated) {
+      cv::undistort(raw_frame, frame, cameraMatrix, distCoeffs);
+    } else {
+      frame = raw_frame.clone(); //
+    }
+
+    pub_raw->publish(matToCompressedMsg(frame));
 
     try {
       Mat frame_bev, frame_hsv, frame_threshold, frame_morph;
@@ -76,17 +111,17 @@ private:
       int height = frame.rows;
 
       Point2f src[4] = {
-        Point2f(119, 59),
-        Point2f(539, 59),
-        Point2f(596, 472),
-        Point2f(119, 476),
+        Point2f(117, 139),
+        Point2f(494, 143),
+        Point2f(589, 455),
+        Point2f(50, 455),
       };
 
       Point2f dst[4] = {
-        Point2f(0.0f, 0.0f), 
-        Point2f(static_cast<float>(width), 0.0f), 
-        Point2f(static_cast<float>(width), static_cast<float>(height)), 
-        Point2f(0.0f, static_cast<float>(height)) 
+        Point2f(0, 0), 
+        Point2f(width, 0), 
+        Point2f(width, height), 
+        Point2f(0, height) 
       };
 
       Mat BEV_plot = getPerspectiveTransform(src, dst);
@@ -98,7 +133,7 @@ private:
 
       frame_morph = frame_threshold.clone(); 
 
-      erode(frame_morph, frame_morph, Mat(), Point(-1, -1), 2);
+      erode(frame_morph, frame_morph, Mat(), Point(-1, -1), 10);
       dilate(frame_morph, frame_morph, Mat(), Point(-1, -1), 5);
 
       std::vector<std::vector<Point>> contours;
@@ -122,7 +157,10 @@ private:
         }
       }
 
-      sort(centers.begin(), centers.end(), [](const cv::Point &a, const cv::Point &b) { 
+      sort(
+        centers.begin(), 
+        centers.end(), 
+        [](const cv::Point &a, const cv::Point &b) { 
         return a.y > b.y;
       });
 
@@ -133,13 +171,17 @@ private:
       }
       pub_centers->publish(centers_msg);
 
-      pub_processed.publish(matToCompressedMsg(frame_result));
+      if (!centers.empty()) {
+        RCLCPP_INFO(get_logger(), "Vision -> Target Titik: X=%d, Y=%d", centers[0].x, centers[0].y);
+      }
 
-      // imshow("RAW", frame);
-      // imshow("Thresholding", frame_threshold);
-      // imshow("BEV", frame_result);
+      pub_processed->publish(matToCompressedMsg(frame_result));
+
+      imshow("RAW", frame);
+      imshow("Thresholding", frame_threshold);
+      imshow("BEV", frame_result);
       
-      // waitKey(1);
+      waitKey(1);
 
     } catch (const cv_bridge::Exception &e) {
       RCLCPP_ERROR(get_logger(), "Error: %s", e.what());
@@ -150,14 +192,18 @@ private:
   cv::VideoCapture cap;
   rclcpp::TimerBase::SharedPtr timer;
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr pub_centers;
-  // rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_raw;
-  // rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_processed;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_raw;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_processed;
+  rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr pub_bev;
 
-  image_transport::Publisher pub_raw;
-  image_transport::Publisher pub_processed;
+  // image_transport::Publisher pub_raw;
+  // image_transport::Publisher pub_processed;
 };
 
 int main(int argc, char **argv) {
+  // matikan Log Spam FFmpeg
+  setenv("OPENCV_FFMPEG_LOGLEVEL", "-8", 1);
+
   rclcpp::init(argc, argv);
   auto node = std::make_shared<VisionNode>();
 

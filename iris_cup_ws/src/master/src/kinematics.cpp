@@ -2,12 +2,25 @@
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <vector>
+#include <iostream>
+#include <cstdint>
+#include <functional>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
 #include "std_msgs/msg/float32.hpp"
 
 using namespace std;
+
+const double CPR = 410.0;
+const double wheels_diameter = 6.7;
+const double wheels_around = M_PI * wheels_diameter;
+const double cm_per_tick = wheels_around / CPR; // 0.05 cm/tick
+const double delta_s = 0.02; // 20 ms
+
+const int steer_offset = 90;
 
 class MasterNode : public rclcpp::Node {
 public:
@@ -21,7 +34,7 @@ public:
 
     // parameter kecepatan dan PID
     target_vel = declare_parameter<int>("target_vel", 50); // target kecepatan 50cm/s
-    current_pwm = declare_parameter<int>("start_pwm", 1500);
+    current_pwm = declare_parameter<int>("start_pwm", 3000);
 
     kp = declare_parameter<double>("kp", 0.35);
     ki = declare_parameter<double>("ki", 0.1);
@@ -44,6 +57,8 @@ public:
       "/feedback", 10,
       bind(&MasterNode::feedback_callback, this, placeholders::_1));
 
+    pid_timer = this->create_wall_timer(std::chrono::milliseconds(20), bind(&MasterNode::pid_callback, this)); // 20ms
+
     RCLCPP_INFO(get_logger(), "Master Node Kinematika Dimulai");
   }
 
@@ -52,36 +67,108 @@ private:
     int center_x = image_width / 2;
     int bottom_y = image_height;
 
-    // double xm_per_pix = 1.0 / 400/0; // 1 meter = 400 pixel
-    // double ym_per_pix = 1.0 / 400/0;
-    double dummy_scale = 0.001;
+    double xm_per_pix = 0.000310;
+    double ym_per_pix = 0.000453;
+    // double dummy_scale = 0.01;
 
-    dx = (target_x - center_x) * dummy_scale;
-    dy = (bottom_y - target_y) * dummy_scale;
+    dx = (target_x - center_x) * xm_per_pix;
+    dy = (bottom_y - target_y) * ym_per_pix;
+  }
+
+  bool select_lookahead_point(const std::vector<int32_t>& points,int& target_x, int& target_y, double& dx, double& dy) {
+    const double lookahead_distance = 0.15; // 15 cm
+
+    double min_distance = INFINITY;
+    bool found = false;
+
+    // periksa titik dari yang terdekat
+    for (size_t i = 0; i + 1 < points.size(); i += 2) {
+        int candidate_x = points[i];
+        int candidate_y = points[i + 1];
+
+        double candidate_dx = 0.0;
+        double candidate_dy = 0.0;
+
+        // konversi pixel ke meter
+        pixel_convertion(
+            candidate_x,
+            candidate_y,
+            candidate_dx,
+            candidate_dy
+        );
+
+        // abaikan titik yang tidak berada di depan robot
+        if (candidate_dy <= 0.0) continue;
+
+        // hitung jarak aktual dari robot
+        double candidate_Ld = hypot(candidate_dx, candidate_dy);
+
+        // RCLCPP_INFO(
+        //     get_logger(),
+        //     "Candidate (%d,%d) | Ld: %.3f m",
+        //     candidate_x,
+        //     candidate_y,
+        //     candidate_Ld
+        // );
+
+        // periksa apakah mencapai lookahead distance
+        if (candidate_Ld >= lookahead_distance && candidate_Ld < min_distance) {
+          min_distance = candidate_Ld;
+
+          target_x = candidate_x;
+          target_y = candidate_y;
+
+          dx = candidate_dx;
+          dy = candidate_dy;
+
+          found = true;
+        }
+    }
+    return found;
   }
 
   double pure_pursuit(double dx, double dy) {
     double Ld = hypot(dx, dy);
 
-    if (Ld < 0.001) return 0.0;
+    if (Ld < 0.001) return 0.0; // cegah pembagian dengan 0
 
+    // sudut arah titik target terhadap robot
     double theta = atan2(dx, dy);
+    // curvature
     double k = (2.0 * sin(theta) / Ld);
-
+    // sudut steering ackermann
     double virtual_steering = atan(wheel_base * k);
-    return virtual_steering * (180.0 / M_PI); // ubah ke derajat
+    // ubah ke derajat
+    return virtual_steering * (180.0 / M_PI);
   }
 
-  void vel_pid(int actual_vel) {
-    int error = target_vel - actual_vel;
-    
-    integral_vel_error += error;
-    integral_vel_error = clamp(integral_vel_error, -500, 500);
+  int vel_pid(int actual_vel) {
+    rclcpp::Time current_time = this->now();
 
-    int d_error = error - last_vel_error;
+    double dt = 0.02;
+    if (!first_pid_call) {
+      dt = (current_time - last_pid_time).seconds();
+    }
 
+    last_pid_time = current_time;
+    first_pid_call = false;
+
+    if (dt <= 0.0) { // hidari perhitungan dengan dt tidak valid
+      return current_pwm;
+    }
+
+    double error = target_vel - actual_vel;
+
+    // proportional
     double p = kp * error;
+    
+    // integral
+    integral_vel_error += error * dt;
+    integral_vel_error = clamp(integral_vel_error, -500.0, 500.0);
     double i = ki * integral_vel_error;
+
+    // derivative
+    double d_error = (error - last_vel_error) / dt;
     double d = kd * d_error;
 
     int correction = static_cast<int>(p + i + d);
@@ -94,67 +181,108 @@ private:
   }
 
   void feedback_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
-    if (msg->data.size() < 4) return;
+    if (msg->data.size() < 12) return;
 
-    current_vel_x = msg->data[2]; // kecepatan maju
+    int encoder_delta = msg->data[2];
+
+    // konversi ke kecepatan
+    double vel_cms = (encoder_delta * cm_per_tick) / delta_s;
+    actual_vel = static_cast<int>(vel_cms);
 
     std_msgs::msg::Float32 speed_msg;
-    speed_msg.data = static_cast<float>(current_vel_x);
+    speed_msg.data = static_cast<float>(actual_vel);
     pub_speed_web->publish(speed_msg);
   }
 
   void vision_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg) {
-    int pwm = 0;
-    int steer = 0;
+    // int steer = last_steer;
 
     // jika vision tidak mendeteksi garis
     if (msg->data.empty()) {
-      steer= last_steer; // pertahankan sudut terakhir
-      pwm = max(0, current_pwm - 200); // kurangi kecepatan perlahan
-    } else {
-      int target_x = msg->data[0];
-      int target_y = msg->data[1];
+      target_valid = false;
+      RCLCPP_WARN(this->get_logger(), "Vision data kosong!");
+      // steer= last_steer; // pertahankan sudut terakhir
 
-      // konversi pixel
+      // // kurangi kecepatan
+      // current_pwm = max(0, current_pwm - 20);
+      // pwm = current_pwm;
+    } 
+    else 
+    {
+      int target_x = 0;
+      int target_y = 0;
+
       double dx = 0.0;
       double dy = 0.0;
-      pixel_convertion(target_x, target_y, dx, dy);
 
-      // pure pursuit
-      steer = static_cast<int>pure_pursuit(dx, dy);
-      steer = clamp(steer, -35, 35);
+      // cari titik target lookahead
+      bool target_found = select_lookahead_point(msg->data, target_x, target_y, dx, dy);
 
-      // PID kecepatan
-      pwm = vel_pid(current_vel_x);
+      target_valid = target_found;
 
-      // slow down saat belok
-      if (abs(steer) > 20) {
-        pwm = max(0, pwm - 300);
-      }
+      if (target_found) {
+        // pure pursuit
+        int pure_steer = static_cast<int>(pure_pursuit(dx, dy));
 
-      last_steer = steer;
+        
+        last_steer = steer_offset + pure_steer;
+        last_steer = clamp(last_steer, steer_offset - 35, steer_offset + 35);
+      } 
+      // else {
+      //   RCLCPP_WARN(get_logger(), "Lookahead point tidak ditemukan!");
 
+      //   pwm = 0;
+      // }
+
+      cout << "\rX: " << target_x << " Y: " << target_y << " dx: " << dx << " dy: " << dy << " Last steer: " << last_steer << flush;
     }
-
-    // publish ke UDP sender [pwm, steer]
-    std_msgs::msg::Int32MultiArray cmd_msg;
-    cmd_msg.data = {pwm, steer};
-    pub_cmd->publish(cmd_msg);
-
-    // publish steering angle ke basestation
-    std_msgs::msg::Float32 steering_web_msg;
-    steering_web_msg.data = static_cast<float>(steer);
-    pub_steering_web->publish(steering_web_msg);
   }
 
-  double wheel_base;
-  int image_width, image_height, servo_offset;
+    void pid_callback() {
+      int pwm = 0;
 
-  int target_vel, current_vel_x, current_pwm;
+      if (target_valid) {
+        // pwm = vel_pid(actual_vel);
+        double steer_angle = last_steer - steer_offset;
+        double angle_rad = abs(steer_angle) * M_PI / 180.0;
+        pwm = static_cast<int>(5000 * cos(angle_rad) * 0.8);
+
+      } else {
+        // tidak ada target jangan kirim perintah jalan
+        current_pwm = 0;
+        integral_vel_error = 0.0;
+        last_vel_error = 0.0;
+        pwm = 0;
+      }
+
+      // publish nilai ke udp sender
+      std_msgs::msg::Int32MultiArray cmd_msg;
+      cmd_msg.data = {pwm, last_steer};
+      pub_cmd->publish(cmd_msg);    
+
+      // RCLCPP_INFO(
+      //     get_logger(),
+      //     "TargetX: %d | TargetY: %d | dx: %.4f | dy: %.4f | Steering: %d",
+      //     target_x, target_y, dx, dy, steer
+      // );
+
+      // publish steering angle ke basestation
+      std_msgs::msg::Float32 steering_web_msg;
+      steering_web_msg.data = static_cast<float>(last_steer);
+      pub_steering_web->publish(steering_web_msg);
+    }
+
+  double wheel_base;
+  int image_width, image_height;
+
+  int target_vel = 30;
+  int actual_vel = 0;
+  int current_pwm = 1500;
+
   double kp, ki, kd;
-  int integral_vel_error = 0;
-  int last_vel_error = 0;
-  int last_steer = 0;
+  double integral_vel_error = 0.0;
+  double last_vel_error = 0.0;
+  int last_steer = steer_offset;
 
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr pub_cmd;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_steering_web;
@@ -162,6 +290,11 @@ private:
 
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr sub_vision;
   rclcpp::Subscription<std_msgs::msg::Int32MultiArray>::SharedPtr sub_feedback;
+
+  rclcpp::TimerBase::SharedPtr pid_timer;
+  rclcpp::Time last_pid_time;
+  bool first_pid_call = true;
+  bool target_valid = false;
 };
 
 int main(int argc, char **argv) {

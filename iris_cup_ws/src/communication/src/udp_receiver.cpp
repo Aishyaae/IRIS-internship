@@ -15,6 +15,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/int32_multi_array.hpp"
+#include "std_msgs/msg/float32.hpp"
 
 class UdpReceiverNode : public rclcpp::Node {
 public:
@@ -27,6 +28,7 @@ public:
 
     // publisher feedback: [packet_seq, encoder_delta, supply_voltage, stm32_connected]
     pub = create_publisher<std_msgs::msg::Int32MultiArray>("/feedback", 10);
+    pub_battery = this->create_publisher<std_msgs::msg::Float32>("/vehicle/battery", 10);
 
     // timer polling non-blocking
     timer = create_wall_timer(
@@ -147,6 +149,12 @@ private:
       fb.stm32_connected    // msg->data[11]
     };
     pub->publish(msg);
+
+    float actual_voltage = static_cast<float>(fb.supply_voltage_mV) / 1000.0f;
+    
+    std_msgs::msg::Float32 msg_battery;
+    msg_battery.data = actual_voltage;
+    pub_battery->publish(msg_battery);
   }
 
   int sock = -1;
@@ -155,6 +163,7 @@ private:
   std::string topic;
 
   rclcpp::Publisher<std_msgs::msg::Int32MultiArray>::SharedPtr pub;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr pub_battery;
   rclcpp::TimerBase::SharedPtr timer;
 };
 
