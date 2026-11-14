@@ -73,7 +73,7 @@ private:
   // isi buffer biner 13 byte: "FRANA" | pwm (int32 LE) | steer (int32 LE)
   void build_packet(uint8_t (&buf)[kPacketSize], int32_t pwm_val, int32_t steer_val) {
     pwm_val = std::clamp<int32_t>(pwm_val, -9999, 9999);
-    steer_val = std::clamp<int32_t>(steer_val, 70, 130);
+    steer_val = std::clamp<int32_t>(steer_val, 50, 120);
 
     uint32_t pwm_le = htole32(static_cast<uint32_t>(pwm_val));
     uint32_t steer_le = htole32(static_cast<uint32_t>(steer_val));

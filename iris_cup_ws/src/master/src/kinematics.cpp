@@ -20,7 +20,7 @@ const double wheels_around = M_PI * wheels_diameter;
 const double cm_per_tick = wheels_around / CPR; // 0.05 cm/tick
 const double delta_s = 0.02; // 20 ms
 
-const int steer_offset = 95;
+const int steer_offset = 85;
 
 class MasterNode : public rclcpp::Node {
 public:
@@ -226,7 +226,7 @@ private:
 
         
         last_steer = steer_offset + pure_steer;
-        last_steer = clamp(last_steer, steer_offset - 30, steer_offset + 20);
+        last_steer = clamp(last_steer, steer_offset - 30, steer_offset + 30);
       } 
       // else {
       //   RCLCPP_WARN(get_logger(), "Lookahead point tidak ditemukan!");
