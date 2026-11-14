@@ -18,28 +18,41 @@ using namespace std::chrono_literals;
 
 class VisionNode : public rclcpp::Node {
 public:
-  // PERBAIKAN 1: Variabel array wajib diaktifkan untuk Trackbar
-  int h[2] = {20, 55}, s[2] = {8, 220}, v[2] = {209, 255};
-
+  int h[2] = {20, 62}, s[2] = {20, 255}, v[2] = {209, 255};
+  // int src_tl_x = 344, src_tl_y = 444;
+  // int src_tr_x = 656, src_tr_y = 450;
+  // int src_br_x = 795, src_br_y = 597;
+  // int src_bl_x = 9,   src_bl_y = 527;
+  // int frame_width = 640;
+  // int frame_height = 480;
 
   VisionNode() : Node("vision_node") {
     // trackbar
     // namedWindow("Control");
-
     // createTrackbar("Hmin", "Control", &h[0], 255);
     // createTrackbar("Smin", "Control", &s[0], 255);
     // createTrackbar("Vmin", "Control", &v[0], 255);
-
     // createTrackbar("Hmax", "Control", &h[1], 255);
     // createTrackbar("Smax", "Control", &s[1], 255);
     // createTrackbar("Vmax", "Control", &v[1], 255);
 
-    stream_url = declare_parameter<std::string>("stream_url", "http://admin:12345@192.168.54.250:8081/video");
+    // namedWindow("Control BEV");
+    // createTrackbar("TL X", "Control BEV", &src_tl_x, frame_width - 1);
+    // createTrackbar("TL Y", "Control BEV", &src_tl_y, frame_height - 1);
+    // createTrackbar("TR X", "Control BEV", &src_tr_x, frame_width - 1);
+    // createTrackbar("TR Y", "Control BEV", &src_tr_y, frame_height - 1);
+    // createTrackbar("BR X", "Control BEV", &src_br_x, frame_width - 1);
+    // createTrackbar("BR Y", "Control BEV", &src_br_y, frame_height - 1);
+    // createTrackbar("BL X", "Control BEV", &src_bl_x, frame_width - 1);
+    // createTrackbar("BL Y", "Control BEV", &src_bl_y, frame_height - 1);
+
+
+    stream_url = declare_parameter<std::string>("stream_url", "http://admin:12345@192.168.54.249:8081/video");
 
     pub_centers = create_publisher<std_msgs::msg::Int32MultiArray>("/vision/lane_centers", 10);
     pub_raw = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_raw", 10);
     pub_processed = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_processed", 10);
-    pub_bev = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_bev", 10);
+    pub_bev = create_publisher<sensor_msgs::msg::CompressedImage>("/camera/image_threshold", 10);
 
     // pub_raw = image_transport::create_publisher(this, "/camera/image_raw");
     // pub_processed = image_transport::create_publisher(this, "camera/image_processed");
@@ -47,6 +60,7 @@ public:
     RCLCPP_INFO(get_logger(), "Mencoba terhubung ke: %s", stream_url.c_str());
 
     cap.open(stream_url);
+    // cap.open(2);
     if (!cap.isOpened()) {
       RCLCPP_ERROR(get_logger(), "Gagal membuka stream! Cek IP HP dan koneksi Wi-Fi.");
     }
@@ -102,6 +116,8 @@ private:
       frame = raw_frame.clone(); //
     }
 
+    // rotate(frame, frame, ROTATE_90_COUNTERCLOCKWISE);
+
     pub_raw->publish(matToCompressedMsg(frame));
 
     try {
@@ -111,10 +127,10 @@ private:
       int height = frame.rows;
 
       Point2f src[4] = {
-        Point2f(117, 139),
-        Point2f(494, 143),
-        Point2f(589, 455),
-        Point2f(50, 455),
+        Point2f(177, 82), // Top Left
+        Point2f(498, 70), // Top Right
+        Point2f(625, 479), // Bottom Right
+        Point2f(65, 462)  // Bottom Left
       };
 
       Point2f dst[4] = {
@@ -133,8 +149,13 @@ private:
 
       frame_morph = frame_threshold.clone(); 
 
-      erode(frame_morph, frame_morph, Mat(), Point(-1, -1), 10);
-      dilate(frame_morph, frame_morph, Mat(), Point(-1, -1), 5);
+      // morph closing
+      Mat kernel_open = getStructuringElement(MORPH_ELLIPSE, Size(5, 5));
+      morphologyEx(frame_threshold, frame_morph, MORPH_OPEN, kernel_open, Point(-1, -1), 1);
+
+      Mat kernel_close = getStructuringElement(MORPH_RECT, Size(21, 21));
+      morphologyEx(frame_morph, frame_morph, MORPH_CLOSE, kernel_close, Point(-1, -1), 1);
+
 
       std::vector<std::vector<Point>> contours;
       findContours(frame_morph, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
@@ -175,7 +196,8 @@ private:
         RCLCPP_INFO(get_logger(), "Vision -> Target Titik: X=%d, Y=%d", centers[0].x, centers[0].y);
       }
 
-      pub_processed->publish(matToCompressedMsg(frame_result));
+      pub_bev->publish(matToCompressedMsg(frame_result));
+      pub_processed->publish(matToCompressedMsg(frame_threshold));
 
       imshow("RAW", frame);
       imshow("Thresholding", frame_threshold);

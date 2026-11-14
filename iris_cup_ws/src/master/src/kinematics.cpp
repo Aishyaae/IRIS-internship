@@ -20,7 +20,7 @@ const double wheels_around = M_PI * wheels_diameter;
 const double cm_per_tick = wheels_around / CPR; // 0.05 cm/tick
 const double delta_s = 0.02; // 20 ms
 
-const int steer_offset = 90;
+const int steer_offset = 95;
 
 class MasterNode : public rclcpp::Node {
 public:
@@ -34,7 +34,7 @@ public:
 
     // parameter kecepatan dan PID
     target_vel = declare_parameter<int>("target_vel", 50); // target kecepatan 50cm/s
-    current_pwm = declare_parameter<int>("start_pwm", 3000);
+    current_pwm = declare_parameter<int>("start_pwm", 1500);
 
     kp = declare_parameter<double>("kp", 0.35);
     ki = declare_parameter<double>("ki", 0.1);
@@ -67,8 +67,8 @@ private:
     int center_x = image_width / 2;
     int bottom_y = image_height;
 
-    double xm_per_pix = 0.000310;
-    double ym_per_pix = 0.000453;
+    double xm_per_pix = 0.000838;
+    double ym_per_pix = 0.000388;
     // double dummy_scale = 0.01;
 
     dx = (target_x - center_x) * xm_per_pix;
@@ -226,7 +226,7 @@ private:
 
         
         last_steer = steer_offset + pure_steer;
-        last_steer = clamp(last_steer, steer_offset - 35, steer_offset + 35);
+        last_steer = clamp(last_steer, steer_offset - 30, steer_offset + 20);
       } 
       // else {
       //   RCLCPP_WARN(get_logger(), "Lookahead point tidak ditemukan!");
@@ -242,17 +242,21 @@ private:
       int pwm = 0;
 
       if (target_valid) {
+        pwm = 3500;
         // pwm = vel_pid(actual_vel);
-        double steer_angle = last_steer - steer_offset;
-        double angle_rad = abs(steer_angle) * M_PI / 180.0;
-        pwm = static_cast<int>(5000 * cos(angle_rad) * 0.8);
+        // double steer_angle = last_steer - steer_offset;
+        // double angle_rad = abs(steer_angle) * M_PI / 180.0;
+        // pwm = static_cast<int>(3500 * cos(angle_rad) * 0.8);
 
       } else {
-        // tidak ada target jangan kirim perintah jalan
-        current_pwm = 0;
-        integral_vel_error = 0.0;
-        last_vel_error = 0.0;
-        pwm = 0;
+        pwm = 3500;
+        // current_pwm -= 200; // perlambatan bertahap
+        // if (current_pwm < 0) {
+        //     current_pwm = 0;
+        //     integral_vel_error = 0.0;
+        //     last_vel_error = 0.0;
+        // }
+        // pwm = current_pwm;
       }
 
       // publish nilai ke udp sender
@@ -270,6 +274,8 @@ private:
       std_msgs::msg::Float32 steering_web_msg;
       steering_web_msg.data = static_cast<float>(last_steer);
       pub_steering_web->publish(steering_web_msg);
+
+      cout << "\rpwm: " << pwm << flush;
     }
 
   double wheel_base;

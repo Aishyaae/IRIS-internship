@@ -4,7 +4,7 @@
 
 int main () {
     // koneksi IP webcam
-    std::string streamAddress = "http://xxx.xxx.xxx.xxx:8080/video"; 
+    std::string streamAddress = "http://admin:12345@10.110.5.153:8081/video"; 
     cv::VideoCapture cap(streamAddress, cv::CAP_FFMPEG); 
 
     cv::namedWindow("Kamera", cv::WINDOW_NORMAL);
@@ -31,13 +31,12 @@ int main () {
         }
     }
 
-    int targetFrame = 15; // jumlah sampel gambar
+    int targetFrame = 30; // jumlah sampel gambar
     cv::Size imageSize; // variabel resolusi gambar
 
     while (cap.isOpened()) { // selama koneksi ke kamera berhasil dibuka dan aktif
-        cap.grab(); // buang frame lama yg tertahan di antrean buffer
         cap >> frame; // ambil 1 frame gambar terbaru dari video cap, lalu simpan ke variabel frame
-        if (frame.empty()) break;
+        if (frame.empty()) continue;
 
         imageSize = frame.size(); // dimensi lebar dan tinggi gambar
 
@@ -66,7 +65,7 @@ int main () {
         if(key == 'q') { // kalo q break
             break;
         } else if (key == ' ' && result) { // kalo space dan papan terdeteksi, simpan
-            cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.1);
+            cv::TermCriteria criteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 30, 0.001);
             cornerSubPix(gray, corners, cv::Size(11, 11), cv::Size(-1, -1), criteria);
             objectPoints.push_back(obj);
             imagePoints.push_back(corners);

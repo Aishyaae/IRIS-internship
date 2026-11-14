@@ -286,9 +286,9 @@
         <div class="container mx-auto px-6 py-4">
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
-                    <img src="logo.svg" alt="IRIS Logo" class="h-8">
+                    <img src="FRANA.png" alt="IRIS Logo" class="h-8">
                     <div>
-                        <h1 class="text-xl font-bold">IRIS Base Station</h1>
+                        <h1 class="text-xl font-bold">FRANA Base Station</h1>
                         <p class="text-xs text-[hsl(240,5%,64.9%)]">Lane Detection Monitor</p>
                     </div>
                 </div>
@@ -333,6 +333,22 @@
                         <input type="text" id="rosTopicProcessed" class="input" placeholder="/camera/image_processed" value="/camera/image_processed">
                     </div>
                     <div>
+                        <label class="block text-sm font-medium mb-2">Image BEV Topic</label>
+                        <input type="text" id="rosTopicBev" class="input" value="/camera/image_bev">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Battery Topic</label>
+                        <input type="text" id="rosTopicBattery" class="input" value="/vehicle/battery">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">Actual Speed Topic</label>
+                        <input type="text" id="rosTopicActualSpeed" class="input" value="/vehicle/actual_speed">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2">RPM Topic</label>
+                        <input type="text" id="rosTopicRpm" class="input" value="/vehicle/rpm">
+                    </div>
+                    <div>
                         <label class="block text-sm font-medium mb-2">Steering Topic</label>
                         <input type="text" id="rosTopicSteering" class="input" placeholder="/vehicle/steering" value="/vehicle/steering">
                     </div>
@@ -347,7 +363,7 @@
         </div>
 
         <!-- Video Streams -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <!-- Raw Image -->
             <div class="card">
                 <h3 class="text-md font-semibold mb-3">Raw Camera Feed</h3>
@@ -371,6 +387,19 @@
                 <div class="mt-3 flex items-center justify-between text-sm">
                     <span class="text-[hsl(240,5%,64.9%)]">FPS: <span id="processedFps">0</span></span>
                     <span class="text-[hsl(240,5%,64.9%)]">Resolution: <span id="processedResolution">-</span></span>
+                </div>
+            </div>
+
+            <!-- Bird's Eye View (BEV) -->
+            <div class="card">
+                <h3 class="text-md font-semibold mb-3">Bird's Eye View (BEV)</h3>
+                <div class="video-container">
+                    <canvas id="bevCanvas"></canvas>
+                    <div class="video-placeholder" id="bevPlaceholder">Waiting for video stream...</div>
+                </div>
+                <div class="mt-3 flex items-center justify-between text-sm">
+                    <span class="text-[hsl(240,5%,64.9%)]">FPS: <span id="bevFps">0</span></span>
+                    <span class="text-[hsl(240,5%,64.9%)]">Resolution: <span id="bevResolution">-</span></span>
                 </div>
             </div>
         </div>
@@ -398,38 +427,46 @@
                 <h3 class="text-md font-semibold mb-4">Lane Detection</h3>
                 <div class="space-y-4">
                     <div>
-                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Lane Status</div>
-                        <span class="badge badge-success" id="laneStatus">Detected</span>
+                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Actual Speed</div>
+                        <div class="metric-value text-2xl" id="actualSpeedValue">0.0 cm/s</div>
                     </div>
                     <div>
-                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Speed (Optional)</div>
-                        <div class="metric-value text-2xl" id="speedValue">0 cm/s</div>
+                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Motor RPM</div>
+                        <div class="metric-value text-2xl" id="rpmValue">0</div>
                     </div>
-                    <div>
+                    <!-- <div>
                         <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Jarak Tempuh</div>
-                        <div class="metric-value text-2xl" id="jarakTempuhValue">0 m</div>
-                    </div>
+                        <div class="metric-value text-2xl" id="jarakTempuhValue">0.00 m</div>
+                    </div> -->
                 </div>
             </div>
 
-            <!-- Obstacle Detection (Optional)
+            <!-- Battery Monitor -->
             <div class="card">
-                <h3 class="text-md font-semibold mb-4">Obstacle Detection</h3>
+                <h3 class="text-md font-semibold mb-4">Battery Monitor</h3>
                 <div class="space-y-4">
                     <div>
+                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Status</div>
+                        <span class="badge badge-warning" id="batteryStatus">Waiting...</span>
+                    </div>
+                    <div>
+                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Voltage (V)</div>
+                        <div class="metric-value text-2xl" id="batteryVoltage">0.00 V</div>
+                    </div>
+                    <!-- <div>
                         <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Obstacle Detected</div>
                         <span class="badge badge-success" id="obstacleStatus">None</span>
-                    </div>
-                    <div>
-                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Distance (cm)</div>
+                    </div> -->
+                    <!-- <div>
+                        <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Battery Voltage</div>
                         <div class="metric-value text-2xl" id="obstacleDistance">- cm</div>
-                    </div>
-                    <div>
+                    </div> -->
+                    <!-- <div>
                         <div class="text-sm text-[hsl(240,5%,64.9%)] mb-1">Position</div>
                         <div class="text-lg font-semibold" id="obstaclePosition">-</div>
-                    </div>
+                    </div> -->
                 </div>
-            </div> -->
+            </div>
         </div>
 
         <!-- System Logs -->

@@ -19,7 +19,7 @@ class UdpSenderNode : public rclcpp::Node {
 public:
   UdpSenderNode() : Node("udp_sender_node") {
     // parameter
-    host = declare_parameter<std::string>("host", "192.168.54.251"); // IP ESP32
+    host = declare_parameter<std::string>("host", "192.168.54.252"); // IP ESP32
     port = declare_parameter<int>("port", 4001);
     rate_hz = declare_parameter<int>("rate_hz", 20);
     timeout_ms = declare_parameter<int>("cmd_timeout_ms", 1000);

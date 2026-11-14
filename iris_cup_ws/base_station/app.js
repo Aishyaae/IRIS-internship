@@ -26,12 +26,15 @@ class BaseStation {
     // Canvas contexts
     this.rawCanvas = document.getElementById("rawCanvas");
     this.processedCanvas = document.getElementById("processedCanvas");
+    this.bevCanvas = document.getElementById("bevCanvas");
     this.rawCtx = this.rawCanvas.getContext("2d");
     this.processedCtx = this.processedCanvas.getContext("2d");
+    this.bevCtx = this.bevCanvas.getContext("2d");
 
     // FPS tracking
     this.rawFpsCounter = new FPSCounter("rawFps");
     this.processedFpsCounter = new FPSCounter("processedFps");
+    this.bevFpsCounter = new FPSCounter("bevFps");
 
     this.telemetryData = {
       steering_angle: 0,
@@ -40,9 +43,7 @@ class BaseStation {
       jarakTempuh: 0,
       laneWidth: 0,
       deviation: 0,
-      obstacleDetected: false,
-      obstacleDistance: 0,
-      obstaclePosition: "center",
+      batteryVoltage: 0.0
     };
 
     this.currentMetric = "angle";
@@ -183,7 +184,10 @@ class BaseStation {
   subscribeToROSTopics() {
     const rawTopic = document.getElementById("rosTopicRaw").value;
     const processedTopic = document.getElementById("rosTopicProcessed").value;
+    const bevTopic = document.getElementById("rosTopicBev").value;
     const speedTopic = document.getElementById("rosTopicSteering").value;
+    const batteryTopic = document.getElementById("rosTopicBattery") ? document.getElementById("rosTopicBattery").value : "/vehicle/battery";
+    const actualSpeedTopic = document.getElementById("rosTopicActualSpeed") ? document.getElementById("rosTopicActualSpeed").value : "/vehicle/actual_speed";
 
     // Subscribe to raw image topic
     const rawImageListener = new ROSLIB.Topic({
@@ -209,6 +213,18 @@ class BaseStation {
       this.processedFpsCounter.tick();
     });
 
+    // Subscribe to BEV image topic
+    const bevImageListener = new ROSLIB.Topic({
+      ros: this.ros,
+      name: bevTopic,
+      messageType: "sensor_msgs/CompressedImage",
+    });
+
+    bevImageListener.subscribe((message) => {
+      this.displayImage(message.data, "bev");
+      this.bevFpsCounter.tick();
+    });
+
     // Subscribe to steering angle topic
     const steeringListener = new ROSLIB.Topic({
       ros: this.ros,
@@ -229,6 +245,38 @@ class BaseStation {
 
     speedListener.subscribe((message) => {
       this.updateTelemetry({ speed: message.data });
+    });
+
+    // Subscribe to Battery Topic
+    const batteryListener = new ROSLIB.Topic({
+      ros: this.ros,
+      name: batteryTopic,
+      messageType: "std_msgs/Float32",
+    });
+
+    batteryListener.subscribe((message) => {
+      this.updateTelemetry({ batteryVoltage: message.data });
+    });
+
+    // Subscribe to Actual Speed
+    const actualSpeedListener = new ROSLIB.Topic({
+      ros: this.ros,
+      name: actualSpeedTopic,
+      messageType: "std_msgs/Float32",
+    });
+    actualSpeedListener.subscribe((message) => {
+      this.updateTelemetry({ actualSpeed: message.data });
+    });
+
+    // Subscribe to RPM
+    const rpmTopic = document.getElementById("rosTopicRpm") ? document.getElementById("rosTopicRpm").value : "/vehicle/rpm";
+    const rpmListener = new ROSLIB.Topic({
+      ros: this.ros,
+      name: rpmTopic,
+      messageType: "std_msgs/Float32",
+    });
+    rpmListener.subscribe((message) => {
+      this.updateTelemetry({ rpm: message.data });
     });
 
     this.log("Subscribed to ROS topics", "success");
@@ -290,9 +338,21 @@ class BaseStation {
    * Display image on canvas
    */
   displayImage(imageData, type) {
-    const canvas = type === "raw" ? this.rawCanvas : this.processedCanvas;
-    const ctx = type === "raw" ? this.rawCtx : this.processedCtx;
-    const placeholder = document.getElementById(`${type}Placeholder`);
+    let canvas, ctx, placeholder;
+
+    if (type === "raw") {
+      canvas = this.rawCanvas;
+      ctx = this.rawCtx;
+      placeholder = document.getElementById("rawPlaceholder");
+    } else if (type === "processed") {
+      canvas = this.processedCanvas;
+      ctx = this.processedCtx;
+      placeholder = document.getElementById("processedPlaceholder");
+    } else if (type === "bev") {
+      canvas = this.bevCanvas;
+      ctx = this.bevCtx;
+      placeholder = document.getElementById("bevPlaceholder");
+    }
 
     if (placeholder) {
       placeholder.style.display = "none";
@@ -333,45 +393,63 @@ class BaseStation {
       this.updateSteeringGauge(angle);
     }
 
-    // Update lane detection
-    if (data.laneStatus !== undefined) {
-      const statusBadge = document.getElementById("laneStatus");
-      statusBadge.textContent = data.laneStatus;
-      statusBadge.className =
-        "badge " +
-        (data.laneStatus === "Detected" ? "badge-success" : "badge-warning");
+    // Update Actual Speed
+    if (data.actualSpeed !== undefined) {
+      document.getElementById("actualSpeedValue").textContent = `${parseFloat(data.actualSpeed).toFixed(1)} cm/s`;
     }
 
-    if (data.speed !== undefined) {
-      document.getElementById("speedValue").textContent = `${data.speed.toFixed(
-        1
-      )} cm/s`;
+    // Update RPM
+    if (data.rpm !== undefined) {
+      // RPM biasanya angka bulat, jadi toFixed(0)
+      document.getElementById("rpmValue").textContent = `${parseFloat(data.rpm).toFixed(0)}`;
     }
 
+    // Update Jarak Tempuh
     if (data.jarakTempuh !== undefined) {
-      document.getElementById(
-        "jarakTempuhValue"
-      ).textContent = `${data.jarakTempuh.toFixed(2)} m`;
+      document.getElementById("jarakTempuhValue").textContent = `${parseFloat(data.jarakTempuh).toFixed(2)} m`;
+    }
+
+    // Update Battery Detection
+    if (data.batteryVoltage !== undefined) {
+      const voltage = parseFloat(data.batteryVoltage);
+      document.getElementById("batteryVoltage").textContent = `${voltage.toFixed(2)} V`;
+
+      const batteryBadge = document.getElementById("batteryStatus");
+      
+      // Logika peringatan untuk Baterai LiPo 3S (11.1V - 12.6V)
+      if (voltage >= 11.4) {
+        batteryBadge.textContent = "Safe";
+        batteryBadge.className = "badge badge-success"; // Warna Hijau
+      } else if (voltage < 11.4 && voltage >= 10.5) {
+        batteryBadge.textContent = "Low Battery";
+        batteryBadge.className = "badge badge-warning"; // Warna Kuning
+      } else if (voltage < 10.5 && voltage > 1.0) {
+        batteryBadge.textContent = "CRITICAL DROP!";
+        batteryBadge.className = "badge badge-error"; // Warna Merah (Segera Cabut!)
+      } else {
+        batteryBadge.textContent = "Unknown";
+        batteryBadge.className = "badge badge-warning";
+      }
     }
 
     // Update obstacle detection
-    if (data.obstacleDetected !== undefined) {
-      const obstacleBadge = document.getElementById("obstacleStatus");
-      obstacleBadge.textContent = data.obstacleDetected ? "Detected" : "None";
-      obstacleBadge.className =
-        "badge " + (data.obstacleDetected ? "badge-error" : "badge-success");
-    }
+    // if (data.obstacleDetected !== undefined) {
+    //   const obstacleBadge = document.getElementById("obstacleStatus");
+    //   obstacleBadge.textContent = data.obstacleDetected ? "Detected" : "None";
+    //   obstacleBadge.className =
+    //     "badge " + (data.obstacleDetected ? "badge-error" : "badge-success");
+    // }
 
-    if (data.obstacleDistance !== undefined) {
-      const distanceCm = Number(data.obstacleDistance) || 0;
-      document.getElementById("obstacleDistance").textContent =
-        distanceCm > 0 ? `${distanceCm.toFixed(0)} cm` : "- cm";
-    }
+    // if (data.obstacleDistance !== undefined) {
+    //   const distanceCm = Number(data.obstacleDistance) || 0;
+    //   document.getElementById("obstacleDistance").textContent =
+    //     distanceCm > 0 ? `${distanceCm.toFixed(0)} cm` : "- cm";
+    // }
 
-    if (data.obstaclePosition !== undefined) {
-      document.getElementById("obstaclePosition").textContent =
-        data.obstaclePosition || "-";
-    }
+    // if (data.obstaclePosition !== undefined) {
+    //   document.getElementById("obstaclePosition").textContent =
+    //     data.obstaclePosition || "-";
+    // }
   }
 
   /**
